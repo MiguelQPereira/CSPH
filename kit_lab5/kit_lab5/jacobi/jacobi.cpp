@@ -162,38 +162,42 @@ jcb_result jacobi_gpu(Matrix &grid)
     float residual = 1.0;
     /* Both kernels can be offloaded to the GPU quite effectively. Try to recall the OpenMP
     construct that can help you avoid redundant data transfers. */ 
-    while (residual > MAX_RESIDUAL)
-    {
-        /* This kernel should be pretty straightforward to parallelize on the GPU */
-        for (int r = 1; r < rows - 1; r++)
-            for (int c = 1; c < cols - 1; c++)
-            {
-                // update each cell based on its neighbors
-                int idx = r * cols + c;
-                data_new[idx] = 0.25 * (
-                    data[(r + 0) * cols + (c + 1)] +  // right
-                    data[(r + 1) * cols + (c + 0)] +  // top
-                    data[(r + 0) * cols + (c - 1)] +  // left
-                    data[(r - 1) * cols + (c + 0)]    // bottom
-                );
-            }
+    #pragma omp target data map(to:data[0:rows*cols]) map(to:data_new[0:rows*cols]) 
+        while (residual > MAX_RESIDUAL)
+        {
+            /* This kernel should be pretty straightforward to parallelize on the GPU */
+                #pragma omp target teams distribute
+            for (int r = 1; r < rows - 1; r++)
+                #pragma omp loop
+                for (int c = 1; c < cols - 1; c++)
+                {
+                    // update each cell based on its neighbors
+                    int idx = r * cols + c;
+                    data_new[idx] = 0.25 * (
+                        data[(r + 0) * cols + (c + 1)] +  // right
+                        data[(r + 1) * cols + (c + 0)] +  // top
+                        data[(r + 0) * cols + (c - 1)] +  // left
+                        data[(r - 1) * cols + (c + 0)]    // bottom
+                    );
+                }
 
-        // compute the max residual, and copy the elements back to `data`
-        residual = 0.0;
-        /* This kernel is a little trickier, you just need to keep two things in mind. First, don't
-        forget to map the residual. Secondly, remember that all threads need to work together to arrive
-        at the maximum residual, also known as a reduction. OpenMP supports a bunch of reduction
-        identifiers, not just a reduction sum! https://www.openmp.org/spec-html/5.0/openmpsu107.html */
-        for (int r = 1; r < rows - 1; r++)
-            for (int c = 1; c < cols - 1; c++)
-            {
-                int idx = r * cols + c;
-                residual = MAX(std::abs(data_new[idx] - data[idx]), residual);
-                data[idx] = data_new[idx];
-            }
+            // compute the max residual, and copy the elements back to `data`
+            residual = 0.0;
+            /* This kernel is a little trickier, you just need to keep two things in mind. First, don't
+            forget to map the residual. Secondly, remember that all threads need to work together to arrive
+            at the maximum residual, also known as a reduction. OpenMP supports a bunch of reduction
+            identifiers, not just a reduction sum! https://www.openmp.org/spec-html/5.0/openmpsu107.html */
+        #pragma omp target teams distribute reduction(max:residual) map(tofrom:residual)
+            for (int r = 1; r < rows - 1; r++)
+                for (int c = 1; c < cols - 1; c++)
+                {
+                    int idx = r * cols + c;
+                    residual = MAX(std::abs(data_new[idx] - data[idx]), residual);
+                    data[idx] = data_new[idx];
+                }
 
-        iterations++;
-    }
+            iterations++;
+        }
 
     return {omp_get_wtime() - start_time, iterations};
 }
@@ -206,7 +210,7 @@ int main(int argc, char *argv[])
     jacobi_grid_init(grid);
 
     std::vector<jcb_impl> implementations = {
-        //{"sequential", jacobi_sequential},
+        {"sequential", jacobi_sequential},
         {"parallel", jacobi_parallel},
         {"gpu", jacobi_gpu},
     };

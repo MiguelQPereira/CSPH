@@ -173,36 +173,43 @@ double mk_parallel_opt(const Matrix &A, const Matrix &Bt, Matrix &C, const Vecto
     float* Z_data = &Z.data[0];
 
     double start_time = omp_get_wtime();
-
-    // Kernel 1, matrix multiplication
-    for (int cr = 0; cr < M; cr++)
+    #pragma omp target data map(to: A_data[0: M*K], Bt_data[0: N*K]) map(from:C_data[0: M*N]) map(alloc: Z_data[0:N])
     {
-        for (int cc = 0; cc < N; cc++)
+        // Kernel 1, matrix multiplication
+        #pragma omp target teams distribute nowait depend(out: C_data)
+        for (int cr = 0; cr < M; cr++)
         {
-            float val = 0.0;
-            for (int k = 0; k < K; k++)
+            #pragma omp loop
+            for (int cc = 0; cc < N; cc++)
             {
-                val += A_data[cr * M + k] * Bt_data[cc * K + k];
+                float val = 0.0;
+                for (int k = 0; k < K; k++)
+                {
+                    val += A_data[cr * M + k] * Bt_data[cc * K + k];
+                }
+                C_data[cr * M + cc] = val;
             }
-            C_data[cr * M + cc] = val;
         }
-    }
 
-    // Kernel 2, Z[i] = 2 * X[i] ^ Y[i]
-    for (int i = 0; i < vec_sz; i++)
-    {
-        Z_data[i] = 2.0 * powf(X_data[i], Y_data[i]);
-    }
-
-    // Kernel 3, C[i][j] += Z[j]
-    for (int cr = 0; cr < M; cr++)
-    {
-        for (int cc = 0; cc < N; cc++)
+        // Kernel 2, Z[i] = 2 * X[i] ^ Y[i]
+        #pragma omp parallel for
+        for (int i = 0; i < vec_sz; i++)
         {
-            C_data[cr * M + cc] += Z_data[cc];
+            Z_data[i] = 2.0 * powf(X_data[i], Y_data[i]);
+        }
+        #pragma omp target update to(Z_data[0:N])
+
+        // Kernel 3, C[i][j] += Z[j]
+        #pragma omp target teams distribute depend(in: Z_data) depend(in: C_data)
+        for (int cr = 0; cr < M; cr++)
+        {
+            #pragma omp loop
+            for (int cc = 0; cc < N; cc++)
+            {
+                C_data[cr * M + cc] += Z_data[cc];
+            }
         }
     }
-
     return omp_get_wtime() - start_time;
 }
 
@@ -225,9 +232,9 @@ int main(int argc, char *argv[])
     Vector gold_vector = Z;
 
     std::vector<mk_impl> implementations = {
-        {"sequential", mk_sequential},
-        {"omp parallel", mk_parallel_cpu},
-        {"omp gpu", mk_parallel_gpu},
+        //{"sequential", mk_sequential},
+        //{"omp parallel", mk_parallel_cpu},
+        //{"omp gpu", mk_parallel_gpu},
         {"optimized", mk_parallel_opt}
     };
 

@@ -23,20 +23,32 @@ void pageRank(Graph graph, double *solution, double damping, double convergence)
     const int n_nodes = num_nodes(graph);
     double *old_score = new double[n_nodes];
     double *new_score = new double[n_nodes];
-
+    std::vector<int> outgoingVector;
     const double equal_prob = 1.0 / n_nodes;
+    #pragma omp parallel for
     for (int i = 0; i < n_nodes; ++i)
     {
         old_score[i] = equal_prob;
+        if(outgoing_size(graph,i)==0){
+            outgoingVector.push_back(i);
+        }
     }
-
+    double temp2 = 0.0f;
     bool converged = false;
+    double const contribution = (1.0 - damping) / static_cast<double>(n_nodes);
+    
     while (!converged)
     {
+        temp2=0.0f;
+        #pragma omp parallel for reduction(+ : temp2) //schedule(dynamic,1)
+        for (std::vector<int>::size_type j = 0; j < outgoingVector.size(); j++){
+            temp2 += damping * old_score[outgoingVector[j]] / n_nodes;
+        }
         // Reset the global diff
         double global_diff = 0.0;
 
         // Compute the new score for all nodes
+        #pragma omp parallel for reduction(+ : global_diff) //schedule(dynamic,1)
         for (int i = 0; i < n_nodes; ++i)
         {
             // Transfer the score from incoming nodes to this one
@@ -52,6 +64,7 @@ void pageRank(Graph graph, double *solution, double damping, double convergence)
             new_score[i] = (damping * new_score[i]) + (1.0 - damping) / static_cast<double>(n_nodes);
 
             // Update the score by summing over all nodes in graph with no outgoing edges
+           /*
            for (int j = 0; j < n_nodes; ++j)
                if (outgoing_size(graph, j) == 0)
                    new_score[i] += damping * old_score[j] / n_nodes;
@@ -59,9 +72,15 @@ void pageRank(Graph graph, double *solution, double damping, double convergence)
             // Accumulate the difference from the last iteration
             global_diff += std::abs(new_score[i] - old_score[i]);
             // Write the result
+            solution[i] = new_score[i];*/
+            global_diff += std::abs(new_score[i] - old_score[i]);
+
+        }
+        #pragma omp parallel for
+        for (int i = 0; i < n_nodes; ++i){
+            // Write the result
             solution[i] = new_score[i];
         }
-
         converged = global_diff < convergence;
         // Swap the new and old scores (the pointers)
         std::swap(old_score, new_score);
