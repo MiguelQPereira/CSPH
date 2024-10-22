@@ -120,13 +120,23 @@ void printCudaInfo() {
 void cublas_gemm(float *A, float *B, float *C, int m, int n, int k, cublasComputeType_t computeType, const char *mode, bool warm_up = false) {
   // TODO:
   // Here you should declare the devA, devB and devC arrays and allocate the memory on the device
+  float** devA;
+  float** devB;
+  float** devC;
 
+  cublasHandle_t handle;
+
+  cudaMalloc((void**)&devA, m*k*sizeof(float));
+  cudaMalloc((void**)&devB, k*n*sizeof(float));
+  cudaMalloc((void**)&devC, m*n*sizeof(float));
   // Here you should copy host input matrices to the device
-
+  cudaMemcpy(devA, A, m*k*sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(devB, B, k*n*sizeof(float), cudaMemcpyHostToDevice);
   // Here you should create a handle for cuBLAS and initialize it with cublasCreate()
-
+  cublasCreate(&handle);
   // Here you should define whether the matrices are transposed or not
-
+  cublasOperation_t transA = CUBLAS_OP_N;
+  cublasOperation_t transB = CUBLAS_OP_N;
   // Scale factors are initialized: alpha = 1, beta = 0 for C = A * B
   // DO NOT MODIFY THESE VALUES
   const float alpha = 1.f;
@@ -147,7 +157,7 @@ void cublas_gemm(float *A, float *B, float *C, int m, int n, int k, cublasComput
   // So, as we saw in the class, you should keep the datatypes of the A, B and C matrices to be CUDA_R_32F (which means a real float) independently of the datatype we are operating in
   // Furthermore, you should keep the algorithm as CUBLAS_GEMM_DEFAULT
 
-
+  CUBLAS_CHECK(cublasGemmEx(handle, transA, transB, m, n, k, &alpha, devA, CUDA_R_32F, m, devB, CUDA_R_32F, k, &beta, devC, CUDA_R_32F, m, computeType, CUBLAS_GEMM_DEFAULT));
 
 
   /* DO NOT MODIFY THIS PART
@@ -167,11 +177,13 @@ void cublas_gemm(float *A, float *B, float *C, int m, int n, int k, cublasComput
   }
 
   // Here you should copy the result matrix back to the host
+  cudaMemcpy(C,devC,m*n*sizeof(float),cudaMemcpyDeviceToHost);
 
   // Do not forget to free the memory on the device here
-
+  cudaFree(devA);
+  cudaFree(devB);
   // Do not forget to destroy the cublas handle here with the cublasDestroy() function
-
+  cublasDestroy(handle);
   return;
 }
 
@@ -185,13 +197,13 @@ void cublas_gemm_fp32(float *A, float *B, float *C, int m, int n, int k, bool wa
 void cublas_gemm_fp16(float *A, float *B, float *C, int m, int n, int k, bool warm_up = false) {
   // Here you should call the cublas gemm function for FP16 using tensor cores with the appropriate compute type
   // The mode only identifies the datatype we are computing in for printing our metrics
-
+  cublas_gemm(A, B, C, m, n, k, CUBLAS_COMPUTE_32F_FAST_16F, "FP16", warm_up);
   return;
 }
 
 void cublas_gemm_tf32(float *A, float *B, float *C, int m, int n, int k, bool warm_up = false) {
   // Here you should call the cublas gemm function for TF32 using tensor cores with the appropriate compute type
   // The mode only identifies the datatype we are computing in for printing our metrics
-
+  cublas_gemm(A, B, C, m, n, k, CUBLAS_COMPUTE_32F_FAST_TF32, "TF32", warm_up);
   return;
 }
