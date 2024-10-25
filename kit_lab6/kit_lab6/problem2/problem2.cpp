@@ -19,8 +19,53 @@ void serialHistogram(double* mat, int* bins, int B, int N){
 
 void syclHistogram(sycl::queue Queue, double* sycldata, int* bins, int N, int B, double* total_time){
     //COMPLETE CODE FOR SYCL KERNEL
+
+    sycl::event event = Queue.submit([&](sycl::handler& h){
+        sycl::local_accessor<int, 1> bins_dev(sycl::range<1>(B), h);
+
+        h.parallel_for(
+            sycl::nd_range<1>(sycl::range(std::min(N, 8192*8192)), sycl::range(1024)), 
+            [=](sycl::nd_item<1> item){
+                int global_id = item.get_global_id(0);
+                int local_id = item.get_local_id(0);
+
+                for (int i = local_id; i < B; i += 1024) {
+                    bins_dev[i] = 0;
+                }
+
+                item.barrier(sycl::access::fence_space::local_space);
+
+                if (global_id < N) {
+                    double value = sycldata[global_id];
+                    int bin_index = int(value * B);
+                    bin_index = std::max(0, std::min(bin_index, B - 1));
+
+                    // Atualiza o bin local com atomic_ref
+                    sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::work_group, sycl::access::address_space::local_space> atomic_local_bin(bins_dev[bin_index]);
+                    atomic_local_bin.fetch_add(1);
+                }
+
+                item.barrier(sycl::access::fence_space::local_space);
+
+                for (int i = local_id; i < B; i += 1024) {
+                    sycl::atomic_ref<int, sycl::memory_order::relaxed, sycl::memory_scope::device, sycl::access::address_space::global_space> atomic_global_bin(bins[i]);
+                    atomic_global_bin.fetch_add(bins_dev[i]);
+                }
+            });
+    });
+
+    event.wait();
+
+    uint64_t start = event.get_profiling_info<sycl::info::event_profiling::command_start>();
+    uint64_t end = event.get_profiling_info<sycl::info::event_profiling::command_end>();
+    *total_time = static_cast<double>(end - start) / pow(10,9);
+
+    //sycl::free(Queue);
+
     return;
 }
+
+    
 
 bool verifyResult(int* gold, int* result, int B) {
 

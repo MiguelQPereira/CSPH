@@ -50,6 +50,61 @@ void serialKMeans(Point* points, double** cents, int N, int C){
 
 void syclKMeans(sycl::queue Queue, Point* points, double** cents, int N, int C, double* total_time){
     //COMPLETE CODE FOR SYCL KERNEL
+    sycl::event event_1 = Queue.submit([&](sycl::handler& h){
+        h.parallel_for(
+            sycl::nd_range<2>(sycl::range<2>(std::min(N, 8192), std::max(N/8292, 1)), sycl::range<2>(64, 64)),
+            [=](sycl::nd_item<2> item){
+                int idx = item.get_global_id(0)*item.get_global_range(1) + item.get_global_id(1);
+                int i = 0;
+                double norm = 0;
+                double min_norm = 1000000;
+                int j = 0;  
+                for(i = idx; i < N; i+=item.get_global_range(0)*item.get_global_range(1)){
+                    for(int j = 0; j < C; j++){
+                        norm = sqrt((points[i].x - cents[j][0])*(points[i].x - cents[j][0]) + (points[i].y - cents[j][1])*(points[i].y - cents[j][1]));
+                        if(norm < min_norm){
+                            min_norm = norm;
+                            points[i].cent_idx = j;
+                        }
+                    }
+                }
+            });
+    });
+    event_1.wait();
+
+    uint64_t start1 = event_1.get_profiling_info<sycl::info::event_profiling::command_start>();
+    uint64_t end1 = event_1.get_profiling_info<sycl::info::event_profiling::command_end>();
+
+    sycl::event event_2 = Queue.submit([&](sycl::handler& h){
+        h.parallel_for(
+            sycl::nd_range<2>(sycl::range<2>(std::min(N, 8192), std::max(N/8292, 1)), sycl::range<2>(64, 64)), 
+            [=](sycl::nd_item<2> item){
+                double x = 0.0f, y = 0.0f;
+                int count = 0;
+                int idx = item.get_global_id(0)*item.get_global_range(1) + item.get_global_id(1), i = 0;
+                for(int i = idx; i < C; i+=item.get_global_range(0)*item.get_global_range(1)){
+                    x = y = 0.0f;
+                    count = 0;
+                    for(int j = 0; j < N; j++){
+                        if(points[j].cent_idx == i){
+                            x += points[j].x;
+                            y += points[j].y;
+                            count++;
+                        }
+                    }
+
+                    cents[i][0] = x/(double)count;
+                    cents[i][1] = y/(double)count;
+                }
+            });
+    });
+    
+    event_2.wait();
+
+    uint64_t start2 = event_2.get_profiling_info<sycl::info::event_profiling::command_start>();
+    uint64_t end2 = event_2.get_profiling_info<sycl::info::event_profiling::command_end>();
+    *total_time = static_cast<double>(end2 - start1) / 1e9;
+
     return;
 }
 

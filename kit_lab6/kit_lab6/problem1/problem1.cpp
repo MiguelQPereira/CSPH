@@ -19,18 +19,22 @@ double serialFrobenius(double** mat, int N){
 }
 
 void syclFrobenius(sycl::queue Queue, double** syclmat, int N, double* total_time, double* sumfrobenius){
-    sycl::event event = Queue.submit([&](sycl::handler& h){
+    double* sum = sycl::malloc_shared <double>(1, Queue);
 
-        h.parallel_for(sycl::nd_range<2>(sycl::range(std::min(N, 8192), std::min(N, 8192)),sycl::range(32,32)),  
-                    [=](sycl::nd_item<2> item) {
-            int x = item.get_global_id(0), y = item.get_global_id(1);
-            sycl::atomic_ref<double, sycl::memory_order::relaxed, sycl::memory_scope::device, sycl::access::address_space::global_space> atomic_global_bin(sumfrobenius[0]);
-            
-            for(int i = x; i < N; i += item.get_global_range(0)){
-                for(int j = y; j < N; j += item.get_global_range(1)){
-                    atomic_global_bin.fetch_add(syclmat[i][j]*syclmat[i][j]);
+    sum[0] = 0.0;
+    
+    sycl::event event = Queue.submit([&](sycl::handler& h){
+        h.parallel_for(
+            sycl::nd_range<2>(sycl::range(std::min(N, 1024), std::min(N, 1024)), sycl::range(32,32)),  
+            sycl::reduction(sum, 0.0, sycl::plus<>()),
+            [=](sycl::nd_item<2> item, auto& sum) {
+                int x = item.get_global_id(0), y = item.get_global_id(1);
+                for(int i = x; i < N; i += item.get_global_range(0)){
+                    for(int j = y; j < N; j += item.get_global_range(1)){
+                        sum += syclmat[i][j]*syclmat[i][j];
+                    }
                 }
-            }
+                
         });
     });
 
@@ -40,7 +44,9 @@ void syclFrobenius(sycl::queue Queue, double** syclmat, int N, double* total_tim
     uint64_t end = event.get_profiling_info<sycl::info::event_profiling::command_end>();
     *total_time = static_cast<double>(end - start) / pow(10,9);
 
-    sumfrobenius[0] = sqrt(sumfrobenius[0]);
+    sumfrobenius[0] = sqrt(sum[0]);
+
+    sycl::free(sum,Queue);
 }
 
 
@@ -90,7 +96,7 @@ int main(int argc, char** argv) {
     //device is CPU, but you are free to also test on GPU (just be careful
     //with allocations and initializations)
     sycl::property_list prop_list{sycl::property::queue::enable_profiling()};
-    auto defaultQueue = sycl::queue{sycl::cpu_selector_v, prop_list};
+    auto defaultQueue = sycl::queue{sycl::gpu_selector_v, prop_list};
 
     std::cout << "Running on: "  << defaultQueue.get_device().get_info<sycl::info::device::name>() << std::endl;
 
